@@ -170,7 +170,7 @@ router.post('/resend-otp', async (req, res) => {
 // Login User
 router.post('/login', async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const { email, password, role } = req.body;
 
         if (!email || !password) {
             return res.status(400).json({ message: "Email and password are required" });
@@ -198,6 +198,12 @@ router.post('/login', async (req, res) => {
             return res.status(401).json({ message: "Invalid email or password" });
         }
 
+        // Check password first (to prevent role enumeration)
+        const isMatch = await bcrypt.compare(password, user.password_hash);
+        if (!isMatch) {
+            return res.status(401).json({ message: "Invalid email or password" });
+        }
+
         if (!user.is_verified) {
             return res.status(403).json({ message: "Email not verified. Please verify your email.", requiresVerification: true });
         }
@@ -210,10 +216,11 @@ router.post('/login', async (req, res) => {
             });
         }
 
-        // Check password
-        const isMatch = await bcrypt.compare(password, user.password_hash);
-        if (!isMatch) {
-            return res.status(401).json({ message: "Invalid email or password" });
+        // Validate role matches the selection (except for admin)
+        if (role && user.role !== 'admin' && user.role !== role) {
+            return res.status(403).json({ 
+                message: `Access denied. Your account is registered as a ${user.role.toUpperCase()}, but you tried to login as a ${role.toUpperCase()}.` 
+            });
         }
 
         // Create JWT

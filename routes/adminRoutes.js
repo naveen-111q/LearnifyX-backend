@@ -9,7 +9,7 @@ const router = express.Router();
 router.get('/teachers', authenticateToken, requireRole('admin'), async (req, res) => {
     try {
         const [teachers] = await pool.execute(
-            'SELECT id, name, email, is_verified, is_approved, section, created_at FROM users WHERE role = ? ORDER BY created_at DESC',
+            'SELECT id, name, email, is_verified, is_approved, section, created_at FROM users WHERE role = ? AND is_verified = TRUE ORDER BY created_at DESC',
             ['teacher']
         );
         res.json(teachers);
@@ -23,7 +23,7 @@ router.get('/teachers', authenticateToken, requireRole('admin'), async (req, res
 router.get('/students', authenticateToken, requireRole('admin'), async (req, res) => {
     try {
         const [students] = await pool.execute(
-            'SELECT id, name, email, is_verified, section, created_at FROM users WHERE role = ? ORDER BY created_at DESC',
+            'SELECT id, name, email, is_verified, section, created_at FROM users WHERE role = ? AND is_verified = TRUE ORDER BY created_at DESC',
             ['student']
         );
         res.json(students);
@@ -59,9 +59,9 @@ router.get('/stats', authenticateToken, requireRole('admin'), async (req, res) =
     try {
         const [stats] = await pool.execute(`
             SELECT 
-                (SELECT COUNT(*) FROM users WHERE role = 'student') as studentCount,
-                (SELECT COUNT(*) FROM users WHERE role = 'teacher' AND is_approved = TRUE) as approvedTeacherCount,
-                (SELECT COUNT(*) FROM users WHERE role = 'teacher' AND is_approved = FALSE) as pendingTeacherCount,
+                (SELECT COUNT(*) FROM users WHERE role = 'student' AND is_verified = TRUE) as studentCount,
+                (SELECT COUNT(*) FROM users WHERE role = 'teacher' AND is_verified = TRUE AND is_approved = TRUE) as approvedTeacherCount,
+                (SELECT COUNT(*) FROM users WHERE role = 'teacher' AND is_verified = TRUE AND is_approved = FALSE) as pendingTeacherCount,
                 (SELECT COUNT(*) FROM exams) as examCount
         `);
         res.json(stats[0]);

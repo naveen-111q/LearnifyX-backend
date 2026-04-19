@@ -176,46 +176,114 @@ router.post('/attempt/:attemptId/submit', authenticateToken, requireRole('studen
 router.post('/:id/attempt', authenticateToken, requireRole('student'), async (req, res) => {
     try {
         const [existingAttempt] = await pool.execute(
-            'SELECT * FROM exam_attempts WHERE exam_id = ? AND student_id = ?',
+            'SELECT * FROM exam_attempts WHERE exam_id = ? AND student_id = ? ORDER BY id DESC LIMIT 1',
             [req.params.id, req.user.id]
         );
-        if (existingAttempt.length > 0) {
-            return res.status(403).json({ message: 'You have already attempted or are currently taking this exam.' });
+
+        // If already COMPLETED, block
+        if (existingAttempt.length > 0 && existingAttempt[0].status === 'completed') {
+            return res.status(403).json({ message: 'You have already completed this exam.' });
+        }
+
+        // If in-progress (e.g. page refresh or React StrictMode double-fire), RESUME it
+        if (existingAttempt.length > 0 && existingAttempt[0].status === 'inprogress') {
+            const attemptId = existingAttempt[0].id;
+            const [exam] = await pool.execute('SELECT subject_id, total_marks, exam_date, start_time, end_time FROM exams WHERE id = ?', [req.params.id]);
+            if (exam.length === 0) return res.status(404).json({ message: 'Exam not found' });
+            const [finalQuestions] = await pool.execute(
+                'SELECT id, type, content, option_a, option_b, option_c, option_d, marks FROM exam_questions WHERE exam_id = ?',
+                [req.params.id]
+            );
+            const normalizeT = (t) => {
+                if (typeof t === 'string') return t.substring(0, 8);
+                if (t && typeof t === 'object' && 'hours' in t) return String(t.hours).padStart(2,'0')+':'+String(t.minutes||0).padStart(2,'0')+':00';
+                return String(t);
+            };
+            const ns = normalizeT(exam[0].start_time);
+            const ne = normalizeT(exam[0].end_time);
+            const [sh, sm] = ns.split(':').map(Number);
+            const [eh, em] = ne.split(':').map(Number);
+            const dur = (eh*60+em) - (sh*60+sm);
+            return res.json({
+                message: 'Exam resumed',
+                attemptId,
+                exam: { duration_minutes: dur > 0 ? dur : 60, end_time: ne },
+                questions: finalQuestions
+            });
         }
 
         const [exam] = await pool.execute('SELECT subject_id, total_marks, exam_date, start_time, end_time FROM exams WHERE id = ?', [req.params.id]);
         if (exam.length === 0) return res.status(404).json({ message: 'Exam not found' });
         
-        const now = new Date();
-
         // Check if this student has a personal rescheduled window
         const [rescheduleRow] = await pool.execute(
             "SELECT DATE_FORMAT(exam_date, '%Y-%m-%d') as exam_date, start_time, end_time FROM exam_reschedules WHERE exam_id = ? AND student_id = ?",
             [req.params.id, req.user.id]
         );
 
+        // Get current date/time in server's local timezone as strings for safe comparison
+        const nowLocal = new Date();
+        const localDateStr = nowLocal.getFullYear() + '-' +
+            String(nowLocal.getMonth() + 1).padStart(2, '0') + '-' +
+            String(nowLocal.getDate()).padStart(2, '0');
+        const localTimeStr = String(nowLocal.getHours()).padStart(2, '0') + ':' +
+            String(nowLocal.getMinutes()).padStart(2, '0') + ':' +
+            String(nowLocal.getSeconds()).padStart(2, '0');
+
+        // Normalize startTime/endTime: MySQL TIME columns can return "HH:MM:SS" or duration objects
+        const normalizeTime = (t) => {
+            if (typeof t === 'string') return t.substring(0, 8); // trim to HH:MM:SS
+            if (t && typeof t === 'object' && 'hours' in t) {
+                // MySQL duration object
+                return String(t.hours).padStart(2, '0') + ':' +
+                    String(t.minutes || 0).padStart(2, '0') + ':' +
+                    String(t.seconds || 0).padStart(2, '0');
+            }
+            return String(t);
+        };
+
+        // Helper to normalize a MySQL date (can be JS Date object or string) to YYYY-MM-DD
+        const normalizeDate = (d) => {
+            if (!d) return '';
+            if (d instanceof Date) {
+                // Use LOCAL date parts to avoid UTC-shift changing the date
+                return d.getFullYear() + '-' +
+                    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                    String(d.getDate()).padStart(2, '0');
+            }
+            // Already a string like "2026-04-19" or "2026-04-19T..."
+            return String(d).substring(0, 10);
+        };
+
         let examDateStr, startTime, endTime;
         if (rescheduleRow.length > 0) {
-            examDateStr = rescheduleRow[0].exam_date;
-            startTime = rescheduleRow[0].start_time;
-            endTime = rescheduleRow[0].end_time;
+            examDateStr = normalizeDate(rescheduleRow[0].exam_date);
+            startTime   = rescheduleRow[0].start_time;
+            endTime     = rescheduleRow[0].end_time;
         } else {
-            const [examDataRow] = await pool.execute("SELECT DATE_FORMAT(exam_date, '%Y-%m-%d') as exam_date, start_time, end_time FROM exams WHERE id = ?", [req.params.id]);
-            examDateStr = examDataRow[0].exam_date;
-            startTime = examDataRow[0].start_time;
-            endTime = examDataRow[0].end_time;
+            const [examDataRow] = await pool.execute(
+                'SELECT exam_date, start_time, end_time FROM exams WHERE id = ?',
+                [req.params.id]
+            );
+            examDateStr = normalizeDate(examDataRow[0].exam_date);
+            startTime   = examDataRow[0].start_time;
+            endTime     = examDataRow[0].end_time;
         }
 
-        const examStart = new Date(`${examDateStr}T${startTime}`);
-        const examEnd = new Date(`${examDateStr}T${endTime}`);
+        const normStart = normalizeTime(startTime);
+        const normEnd   = normalizeTime(endTime);
+
+        // Compare date+time as sortable strings "YYYY-MM-DD HH:MM:SS"
+        const nowDT   = `${localDateStr} ${localTimeStr}`;
+        const startDT = `${examDateStr} ${normStart}`;
+        const endDT   = `${examDateStr} ${normEnd}`;
 
         console.log(`[Exam Check] Student: ${req.user.id}, Exam: ${req.params.id}`);
-        console.log(`[Exam Check] Now: ${now.toISOString()}`);
-        console.log(`[Exam Check] Start: ${examStart.toISOString()} (${examDateStr} T ${startTime})`);
-        console.log(`[Exam Check] End: ${examEnd.toISOString()} (${examDateStr} T ${endTime})`);
+        console.log(`[Exam Check] Now (local): ${nowDT}`);
+        console.log(`[Exam Check] Window: ${startDT} → ${endDT}`);
 
-        if (now < examStart) return res.status(403).json({ message: 'Exam has not started yet.' });
-        if (now > examEnd) return res.status(403).json({ message: 'Exam window has closed.' });
+        if (nowDT < startDT) return res.status(403).json({ message: `Exam has not started yet. It starts at ${normStart} on ${examDateStr}.` });
+        if (nowDT > endDT)   return res.status(403).json({ message: `Exam window has closed. It ended at ${normEnd} on ${examDateStr}.` });
 
         const [result] = await pool.execute(
             "INSERT INTO exam_attempts (exam_id, student_id, status) VALUES (?, ?, 'inprogress')",
@@ -229,12 +297,15 @@ router.post('/:id/attempt', authenticateToken, requireRole('student'), async (re
             WHERE exam_id = ?
         `, [req.params.id]);
 
-        const durationMinutes = Math.floor((examEnd - examStart) / 1000 / 60);
+        // Calculate duration from normalized time strings
+        const [startH, startM] = normStart.split(':').map(Number);
+        const [endH, endM] = normEnd.split(':').map(Number);
+        const durationMinutes = (endH * 60 + endM) - (startH * 60 + startM);
 
         res.json({
             message: 'Exam started',
             attemptId,
-            exam: { duration_minutes: durationMinutes, end_time: exam[0].end_time, exam_date: exam[0].exam_date },
+            exam: { duration_minutes: durationMinutes > 0 ? durationMinutes : 60, end_time: normEnd, exam_date: examDateStr },
             questions: finalQuestions
         });
     } catch (error) {

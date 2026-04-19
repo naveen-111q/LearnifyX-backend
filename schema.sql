@@ -48,11 +48,12 @@ CREATE TABLE IF NOT EXISTS questions (
     id INT AUTO_INCREMENT PRIMARY KEY,
     topic_id INT NOT NULL,
     content TEXT NOT NULL,
-    option_a VARCHAR(255) NOT NULL,
-    option_b VARCHAR(255) NOT NULL,
-    option_c VARCHAR(255) NOT NULL,
-    option_d VARCHAR(255) NOT NULL,
-    correct_option ENUM('A', 'B', 'C', 'D') NOT NULL,
+    type ENUM('mcq', 'true_false', 'short_answer') DEFAULT 'mcq',
+    option_a VARCHAR(255) NULL,
+    option_b VARCHAR(255) NULL,
+    option_c VARCHAR(255) NULL,
+    option_d VARCHAR(255) NULL,
+    correct_option VARCHAR(50) NOT NULL,
     difficulty ENUM('easy', 'medium', 'hard') NOT NULL,
     explanation TEXT,
     FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
@@ -63,12 +64,40 @@ CREATE TABLE IF NOT EXISTS exams (
     subject_id INT NOT NULL,
     teacher_id INT,
     title VARCHAR(255) NOT NULL,
-    start_time DATETIME NOT NULL,
-    duration_minutes INT NOT NULL,
+    exam_date DATE NOT NULL,
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
     total_marks INT NOT NULL,
     status ENUM('draft', 'published', 'completed') DEFAULT 'draft',
+    allowed_section VARCHAR(20) DEFAULT '',
     FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
     FOREIGN KEY (teacher_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS exam_questions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    exam_id INT NOT NULL,
+    type ENUM('mcq', 'true_false', 'short_answer') DEFAULT 'mcq',
+    content TEXT NOT NULL,
+    option_a VARCHAR(255) NULL,
+    option_b VARCHAR(255) NULL,
+    option_c VARCHAR(255) NULL,
+    option_d VARCHAR(255) NULL,
+    correct_option VARCHAR(50) NULL,
+    text_answer TEXT NULL,
+    marks INT DEFAULT 1,
+    FOREIGN KEY (exam_id) REFERENCES exams(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS exam_reschedules (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    exam_id INT NOT NULL,
+    student_id INT NOT NULL,
+    exam_date DATE NOT NULL,
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
+    FOREIGN KEY (exam_id) REFERENCES exams(id) ON DELETE CASCADE,
+    FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS exam_attempts (
@@ -87,7 +116,8 @@ CREATE TABLE IF NOT EXISTS answers (
     id INT AUTO_INCREMENT PRIMARY KEY,
     attempt_id INT NOT NULL,
     question_id INT NOT NULL,
-    selected_option ENUM('A', 'B', 'C', 'D') NULL,
+    selected_option VARCHAR(50) NULL,
+    text_answer TEXT NULL,
     is_correct BOOLEAN DEFAULT FALSE,
     FOREIGN KEY (attempt_id) REFERENCES exam_attempts(id) ON DELETE CASCADE
 );

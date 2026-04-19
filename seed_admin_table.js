@@ -17,8 +17,24 @@ async function seedAdmin() {
 
     let connection;
     try {
+        console.log("Using DB Config:", { ...config, password: '***' });
         connection = await mysql.createConnection(config);
         console.log("Connected to database.");
+
+        const adminEmail = 'srmap2026@gmail.com';
+        const adminId = 'SRMAP2026';
+        const adminPassword = 'naveen';
+        
+        console.log(`Generating hash for password: '${adminPassword}'...`);
+        const hashedPassword = await bcrypt.hash(adminPassword, 10);
+        console.log("Generated hash:", hashedPassword);
+
+        // Verification check
+        const isMatch = await bcrypt.compare(adminPassword, hashedPassword);
+        if (!isMatch) {
+            throw new Error("Self-verification failed: Generated hash does not match original password!");
+        }
+        console.log("Verification successful: Hash matches password.");
 
         // 0. Ensure admin table exists
         await connection.execute(`
@@ -31,11 +47,6 @@ async function seedAdmin() {
             )
         `);
         console.log("Ensured 'admin' table exists.");
-
-        const adminEmail = 'srmap2026@gmail.com';
-        const adminId = 'SRMAP2026';
-        const adminPassword = 'naveen';
-        const hashedPassword = await bcrypt.hash(adminPassword, 10);
 
         // 1. Remove admin users from general users table (to ensure separation)
         await connection.execute("DELETE FROM users WHERE role = 'admin'");
