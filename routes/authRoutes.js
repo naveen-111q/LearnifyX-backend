@@ -177,8 +177,22 @@ router.post('/login', async (req, res) => {
         }
 
         // Find user by email or login_id
-        const [users] = await pool.execute('SELECT * FROM users WHERE email = ? OR login_id = ?', [email, email]);
-        const user = users[0];
+        let user;
+        let [userRecords] = await pool.execute('SELECT * FROM users WHERE email = ? OR login_id = ?', [email, email]);
+        
+        if (userRecords.length > 0) {
+            user = userRecords[0];
+        } else {
+            // Check if it's an admin (dedicated table)
+            const [adminRecords] = await pool.execute('SELECT * FROM admin WHERE email = ? OR admin_id = ?', [email, email]);
+            if (adminRecords.length > 0) {
+                user = adminRecords[0];
+                user.role = 'admin'; // Ensure role is set for admin table records
+                user.is_verified = true; // Admins are always verified
+                user.is_approved = true; // Admins are always approved
+                user.name = 'Administrator';
+            }
+        }
 
         if (!user) {
             return res.status(401).json({ message: "Invalid email or password" });
