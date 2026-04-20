@@ -198,8 +198,21 @@ router.post('/login', async (req, res) => {
             return res.status(401).json({ message: "Invalid email or password" });
         }
 
+        // Safety check for password_hash
+        if (!user.password_hash) {
+            console.error(`User ${email} found but has no password_hash!`);
+            return res.status(401).json({ message: "Account configuration error. Please contact the administrator." });
+        }
+
         // Check password first (to prevent role enumeration)
-        const isMatch = await bcrypt.compare(password, user.password_hash);
+        let isMatch = false;
+        try {
+            isMatch = await bcrypt.compare(password, user.password_hash);
+        } catch (bcryptErr) {
+            console.error("Bcrypt comparison error:", bcryptErr);
+            throw new Error("Encryption verification failed");
+        }
+
         if (!isMatch) {
             return res.status(401).json({ message: "Invalid email or password" });
         }
@@ -217,9 +230,12 @@ router.post('/login', async (req, res) => {
         }
 
         // Validate role matches the selection (except for admin)
-        if (role && user.role !== 'admin' && user.role !== role) {
+        const userRole = (user.role || '').toLowerCase();
+        const selectedRole = (role || '').toLowerCase();
+        
+        if (selectedRole && userRole !== 'admin' && userRole !== selectedRole) {
             return res.status(403).json({ 
-                message: `Access denied. Your account is registered as a ${user.role.toUpperCase()}, but you tried to login as a ${role.toUpperCase()}.` 
+                message: `Access denied. Your account is registered as a ${userRole.toUpperCase()}, but you tried to login as a ${selectedRole.toUpperCase()}.` 
             });
         }
 
@@ -243,8 +259,9 @@ router.post('/login', async (req, res) => {
             }
         });
     } catch (error) {
+        require('fs').appendFileSync('server_error.log', `${new Date().toISOString()} - Login Error: ${error.message}\n${error.stack}\n\n`);
         console.error("Login error:", error);
-        res.status(500).json({ message: "Server error during login" });
+        res.status(500).json({ message: "Server error during login", error: error.message });
     }
 });
 
